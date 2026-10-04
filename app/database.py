@@ -28,6 +28,12 @@ else:
     engine_kwargs["pool_pre_ping"] = True
     engine_kwargs["pool_size"] = 10
     engine_kwargs["max_overflow"] = 20
+
+    # Supavisor transaction pooling can hand a new physical Postgres session
+    # to the same client connection. Psycopg's automatic prepared statements
+    # are session-specific, so disable them when using a Supabase pooler.
+    if "pooler.supabase.com" in db_url:
+        engine_kwargs["connect_args"] = {"prepare_threshold": None}
     engine_kwargs["pool_recycle"] = 300
 
 engine = create_engine(
