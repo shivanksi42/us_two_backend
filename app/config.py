@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # ── Frontend ──
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # ── Google Sign-In ──
+    # OAuth web client ID. This identifier is public; no client secret is
+    # used because the API verifies the Google-issued ID token server-side.
+    GOOGLE_CLIENT_ID: str = ""
+
     # ── Cloudinary ──
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""

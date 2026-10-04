@@ -103,6 +103,64 @@ class AuthService:
     # ── LOGIN ──
 
     @staticmethod
+    def login_with_google(
+        db: Session,
+        email: str,
+        google_sub: str,
+        device_info: Optional[str] = None,
+        ip_address: str = "unknown",
+    ) -> dict:
+        """Sign in with a verified Google identity or create its account."""
+        email = email.strip().lower()
+        user = db.query(User).filter(User.google_sub == google_sub).first()
+
+        if not user:
+            user = db.query(User).filter(User.email == email).first()
+            if user and user.google_sub and user.google_sub != google_sub:
+                logger.warning("Google sign-in rejected for already-linked email")
+                raise InvalidCredentialsError()
+            if not user:
+                # Password remains required by the existing database model, but
+                # is never disclosed or used for a Google-created account.
+                user = User(
+                    email=email,
+                    password_hash=hash_password(generate_secure_token()),
+                    google_sub=google_sub,
+                )
+                db.add(user)
+                db.flush()
+            else:
+                user.google_sub = google_sub
+
+        if not user.is_active:
+            raise AccountSuspendedError()
+        if user.is_deleted:
+            raise AccountDeletedError()
+
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.last_login_at = datetime.now(timezone.utc)
+        access_token = create_access_token({"user_id": user.id, "email": user.email})
+        raw_refresh = generate_secure_token()
+        db.add(RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(raw_refresh),
+            device_info=device_info,
+            ip_address=ip_address,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ))
+        db.commit()
+
+        logger.info("Google sign-in: user_id=%s", user.id)
+        return {
+            "access_token": access_token,
+            "refresh_token": raw_refresh,
+            "token_type": "bearer",
+            "user": {"id": user.id, "email": user.email},
+            "message": "Signed in with Google",
+        }
+
+    @staticmethod
     def login(
         db: Session,
         email: str,

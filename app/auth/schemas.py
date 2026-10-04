@@ -104,6 +104,12 @@ class LoginRequest(BaseSchema):
         return v.strip().lower()
 
 
+class GoogleLoginRequest(BaseSchema):
+    """Google Identity Services ID token received by the browser."""
+
+    credential: str = Field(..., min_length=20, max_length=10000)
+
+
 class RefreshTokenRequest(BaseSchema):
     """Refresh token request payload."""
 

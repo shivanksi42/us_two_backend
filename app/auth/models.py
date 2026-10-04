@@ -30,6 +30,9 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    google_sub: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
 
     # Account state
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")

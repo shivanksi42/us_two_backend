@@ -235,6 +235,15 @@ def startup():
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE memories ADD COLUMN {name} VARCHAR(10)"))
                     logger.info("Added memories.%s", name)
+    if inspector.has_table("users"):
+        user_columns = {column["name"] for column in inspector.get_columns("users")}
+        with engine.begin() as connection:
+            if "google_sub" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN google_sub VARCHAR(255)"))
+                logger.info("Added users.google_sub")
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users (google_sub)"
+            ))
     logger.info("Database tables created/verified")
 
 

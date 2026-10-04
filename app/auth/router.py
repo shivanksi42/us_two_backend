@@ -7,18 +7,21 @@ Adapted from Project1's production-grade auth router for us-two.
 
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, Request, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_current_user, get_db
 from app.auth.schemas import (
     ChangePasswordRequest,
     DeleteAccountRequest,
+    GoogleLoginRequest,
     LoginRequest,
     RefreshTokenRequest,
     RegisterRequest,
 )
 from app.auth.service import AuthService
+from app.config import settings
+from app.exceptions import InvalidCredentialsError
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -123,6 +126,47 @@ def login(
     # Set refresh token as HTTP-only cookie
     _set_refresh_cookie(response, result["refresh_token"])
 
+    return {
+        "access_token": result["access_token"],
+        "token_type": result["token_type"],
+        "user": result["user"],
+        "message": result["message"],
+    }
+
+
+@router.post("/google")
+def google_login(
+    request: Request,
+    response: Response,
+    payload: GoogleLoginRequest,
+    db: Session = Depends(get_db),
+):
+    """Validate a Google ID token, then create or sign in the local user."""
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(503, "Google Sign-In is not configured.")
+
+    try:
+        from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token
+
+        claims = id_token.verify_oauth2_token(
+            payload.credential, google_requests.Request(), settings.GOOGLE_CLIENT_ID
+        )
+        if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
+            raise ValueError("Invalid Google token issuer")
+        if not claims.get("email_verified") or not claims.get("email") or not claims.get("sub"):
+            raise ValueError("Google account email is not verified")
+    except Exception:
+        raise InvalidCredentialsError()
+
+    result = AuthService.login_with_google(
+        db=db,
+        email=claims["email"],
+        google_sub=claims["sub"],
+        device_info=request.headers.get("User-Agent"),
+        ip_address=_get_client_ip(request),
+    )
+    _set_refresh_cookie(response, result["refresh_token"])
     return {
         "access_token": result["access_token"],
         "token_type": result["token_type"],
