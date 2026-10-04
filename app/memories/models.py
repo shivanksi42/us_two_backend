@@ -34,6 +34,8 @@ class Memory(Base):
     date_end: Mapped[Optional[str]] = mapped_column(String(10))
     color: Mapped[str] = mapped_column(String(10), default="#C45B38")
     cover: Mapped[Optional[str]] = mapped_column(Text)
+    hero_position_x: Mapped[int] = mapped_column(Integer, default=50)
+    hero_position_y: Mapped[int] = mapped_column(Integer, default=50)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

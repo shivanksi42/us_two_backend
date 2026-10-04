@@ -15,6 +15,8 @@ class MemoryIn(BaseModel):
     date_end: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     color: str = "#C45B38"
     cover: Optional[str] = None
+    hero_position_x: int = Field(default=50, ge=0, le=100)
+    hero_position_y: int = Field(default=50, ge=0, le=100)
 
     @model_validator(mode="after")
     def validate_date_range(self):

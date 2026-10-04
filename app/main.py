@@ -231,9 +231,14 @@ def startup():
     if inspector.has_table("memories"):
         columns = {column["name"] for column in inspector.get_columns("memories")}
         with engine.begin() as connection:
-            for name in ("date_start", "date_end"):
+            for name, definition in (
+                ("date_start", "VARCHAR(10)"),
+                ("date_end", "VARCHAR(10)"),
+                ("hero_position_x", "INTEGER DEFAULT 50"),
+                ("hero_position_y", "INTEGER DEFAULT 50"),
+            ):
                 if name not in columns:
-                    connection.execute(text(f"ALTER TABLE memories ADD COLUMN {name} VARCHAR(10)"))
+                    connection.execute(text(f"ALTER TABLE memories ADD COLUMN {name} {definition}"))
                     logger.info("Added memories.%s", name)
     if inspector.has_table("users"):
         user_columns = {column["name"] for column in inspector.get_columns("users")}

@@ -144,6 +144,8 @@ def dump_memory(memory: Memory) -> dict:
         "endDate": memory.date_end,
         "color": memory.color,
         "cover": memory.cover,
+        "heroPositionX": memory.hero_position_x,
+        "heroPositionY": memory.hero_position_y,
         "days": [
             {
                 "id": day.id,
