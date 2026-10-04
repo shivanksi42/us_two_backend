@@ -148,11 +148,13 @@ def google_login(
         raise HTTPException(503, "Google Sign-In is not configured.")
 
     try:
-        from google.auth.transport import requests as google_requests
+        # google-auth's synchronous Requests transport requires the external
+        # ``requests`` package (declared in backend/requirements.txt).
+        from google.auth.transport.requests import Request as GoogleRequest
         from google.oauth2 import id_token
 
         claims = id_token.verify_oauth2_token(
-            payload.credential, google_requests.Request(), settings.GOOGLE_CLIENT_ID
+            payload.credential, GoogleRequest(), settings.GOOGLE_CLIENT_ID
         )
         if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
             raise ValueError("Invalid Google token issuer")
