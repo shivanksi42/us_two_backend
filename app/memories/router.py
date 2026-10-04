@@ -22,6 +22,7 @@ from app.dependencies import get_current_user, get_db
 from app.memories.models import Memory, MemoryDay, MemoryEntry
 from app.memories.schemas import (
     BulkEntriesIn, DayIn, DayUpdate, EntryIn, EntryUpdate, MemoryIn, MemoryUpdate,
+    UploadFailureIn,
 )
 
 router = APIRouter(prefix="/api", tags=["Memories"])
@@ -382,3 +383,19 @@ def cloudinary_signature(user: User = Depends(get_current_user)):
         "api_key": api_key,
         "cloud_name": cloud_name,
     }
+
+
+@router.post("/uploads/failure", status_code=204)
+def report_cloudinary_upload_failure(
+    payload: UploadFailureIn,
+    user: User = Depends(get_current_user),
+):
+    """Record a browser-side Cloudinary rejection in server logs for diagnosis."""
+    logger.warning(
+        "Cloudinary direct upload failed user_id=%s file=%r resource_type=%s status=%s reason=%r",
+        user.id,
+        payload.file_name,
+        payload.resource_type,
+        payload.status,
+        payload.reason,
+    )

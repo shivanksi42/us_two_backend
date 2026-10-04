@@ -67,3 +67,11 @@ class BulkEntriesIn(BaseModel):
     """Create multiple entries within a day in a single batch."""
     entries: list[EntryIn] = Field(..., min_length=1, max_length=100)
     insert_at: Optional[int] = Field(default=None, ge=0)
+
+
+class UploadFailureIn(BaseModel):
+    """A direct-to-Cloudinary upload error reported by the authenticated client."""
+    file_name: str = Field(min_length=1, max_length=255)
+    resource_type: Literal["image", "video"]
+    status: int = Field(ge=0, le=599)
+    reason: str = Field(min_length=1, max_length=1000)
