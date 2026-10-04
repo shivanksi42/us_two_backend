@@ -4,10 +4,12 @@ Handles CRUD operations for memories, days, and entries.
 """
 
 import os
+import logging
 from datetime import date, datetime, timezone
 from typing import Optional
 
 import cloudinary
+import cloudinary.api
 import cloudinary.utils
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
@@ -23,6 +25,7 @@ from app.memories.schemas import (
 )
 
 router = APIRouter(prefix="/api", tags=["Memories"])
+logger = logging.getLogger("us-two.memories")
 
 
 def journey_label(
@@ -69,6 +72,46 @@ def accessible_day(db: Session, day_id: str, user_id: str) -> Optional[MemoryDay
         .join(Memory)
         .where(MemoryDay.id == day_id, Memory.user_id.in_(shared_user_ids(db, user_id)))
     )
+
+
+def configure_cloudinary() -> tuple[str, str, str]:
+    """Configure Cloudinary and return its credentials or a clear API error."""
+    cloud_name = settings.CLOUDINARY_CLOUD_NAME or os.getenv("CLOUDINARY_CLOUD_NAME")
+    api_key = settings.CLOUDINARY_API_KEY or os.getenv("CLOUDINARY_API_KEY")
+    api_secret = settings.CLOUDINARY_API_SECRET or os.getenv("CLOUDINARY_API_SECRET")
+    if not all([cloud_name, api_key, api_secret]):
+        raise HTTPException(503, "Cloudinary is not configured on the backend.")
+    cloudinary.config(
+        cloud_name=cloud_name,
+        api_key=api_key,
+        api_secret=api_secret,
+        secure=True,
+    )
+    return cloud_name, api_key, api_secret
+
+
+def delete_cloudinary_images(entries: list[MemoryEntry]) -> None:
+    """Delete Cloudinary assets for photo entries before their DB rows disappear."""
+    public_ids = sorted({entry.photo_public_id for entry in entries if entry.photo_public_id})
+    if not public_ids:
+        return
+    configure_cloudinary()
+    try:
+        result = cloudinary.api.delete_resources(
+            public_ids,
+            resource_type="image",
+            invalidate=True,
+        )
+        deleted = result.get("deleted", {})
+        failed = [public_id for public_id in public_ids if deleted.get(public_id) not in {"deleted", "not_found"}]
+        if failed:
+            logger.error("Cloudinary did not delete asset(s): %s", failed)
+            raise HTTPException(502, "Could not delete the uploaded image. Please try again.")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Cloudinary image deletion failed")
+        raise HTTPException(502, "Could not delete the uploaded image. Please try again.")
 
 
 def dump_entry(entry: MemoryEntry) -> dict:
@@ -173,6 +216,9 @@ def delete_memory(
     memory = accessible_memory(db, memory_id, user.id)
     if not memory:
         raise HTTPException(404, "Memory not found.")
+    delete_cloudinary_images([
+        entry for day in memory.days for entry in day.entries
+    ])
     db.delete(memory)
     db.commit()
 
@@ -220,6 +266,7 @@ def delete_day(
     day = accessible_day(db, day_id, user.id)
     if not day:
         raise HTTPException(404, "Day not found.")
+    delete_cloudinary_images(list(day.entries))
     db.delete(day)
     db.commit()
 
@@ -278,6 +325,7 @@ def delete_entry(
     )
     if not entry:
         raise HTTPException(404, "Moment not found.")
+    delete_cloudinary_images([entry])
     db.delete(entry)
     db.commit()
 
@@ -309,19 +357,7 @@ def create_entries_bulk(
 @router.get("/uploads/signature")
 def cloudinary_signature(user: User = Depends(get_current_user)):
     """Generate a Cloudinary upload signature."""
-    cloud_name = settings.CLOUDINARY_CLOUD_NAME or os.getenv("CLOUDINARY_CLOUD_NAME")
-    api_key = settings.CLOUDINARY_API_KEY or os.getenv("CLOUDINARY_API_KEY")
-    api_secret = settings.CLOUDINARY_API_SECRET or os.getenv("CLOUDINARY_API_SECRET")
-
-    if not all([cloud_name, api_key, api_secret]):
-        raise HTTPException(503, "Cloudinary is not configured on the backend.")
-
-    cloudinary.config(
-        cloud_name=cloud_name,
-        api_key=api_key,
-        api_secret=api_secret,
-        secure=True,
-    )
+    cloud_name, api_key, api_secret = configure_cloudinary()
     timestamp = int(datetime.now(timezone.utc).timestamp())
     params = {"timestamp": timestamp, "folder": f"us-two/{user.id}"}
     return {
