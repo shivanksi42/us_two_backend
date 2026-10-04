@@ -207,9 +207,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # ── Routers ──
 
 from app.auth.router import router as auth_router
+from app.connect.router import router as connect_router
 from app.memories.router import router as memories_router
 
 app.include_router(auth_router)
+app.include_router(connect_router)
 app.include_router(memories_router)
 
 
@@ -221,6 +223,7 @@ def startup():
     """Create all database tables on startup."""
     # Import all models to ensure they're registered with Base.metadata
     import app.auth.models  # noqa: F401
+    import app.connect.models  # noqa: F401
     import app.memories.models  # noqa: F401
     Base.metadata.create_all(engine)
     logger.info("Database tables created/verified")

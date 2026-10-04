@@ -9,11 +9,12 @@ from datetime import datetime, timezone
 import cloudinary
 import cloudinary.utils
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.config import settings
+from app.connect.models import PartnerConnection
 from app.dependencies import get_current_user, get_db
 from app.memories.models import Memory, MemoryDay, MemoryEntry
 from app.memories.schemas import BulkEntriesIn, DayIn, EntryIn, MemoryIn
@@ -63,10 +64,30 @@ def list_memories(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all memories for the current user."""
+    """List all memories for the current user and their connected partner."""
+    # Find connected partner (if any)
+    accepted = db.scalar(
+        select(PartnerConnection).where(
+            PartnerConnection.status == "accepted",
+            or_(
+                PartnerConnection.requester_id == user.id,
+                PartnerConnection.partner_id == user.id,
+            ),
+        )
+    )
+    user_ids = [user.id]
+    if accepted:
+        other_id = (
+            accepted.partner_id
+            if accepted.requester_id == user.id
+            else accepted.requester_id
+        )
+        if other_id:
+            user_ids.append(other_id)
+
     memories = db.scalars(
         select(Memory)
-        .where(Memory.user_id == user.id)
+        .where(Memory.user_id.in_(user_ids))
         .order_by(Memory.created_at.desc())
     ).unique()
     return [dump_memory(m) for m in memories]
