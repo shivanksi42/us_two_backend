@@ -27,6 +27,24 @@ class MemoryIn(BaseModel):
         return self
 
 
+class MemoryUpdate(MemoryIn):
+    """Update a memory. The client sends the complete editable chapter."""
+
+
+class DayUpdate(BaseModel):
+    day_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    title: str = Field(min_length=1, max_length=200)
+
+
+class EntryUpdate(BaseModel):
+    type: Literal["photo", "text"]
+    photo_url: Optional[str] = None
+    photo_public_id: Optional[str] = None
+    caption: Optional[str] = None
+    body: Optional[str] = None
+    color: Optional[str] = None
+
+
 class DayIn(BaseModel):
     """Create a new day within a memory."""
     day_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")

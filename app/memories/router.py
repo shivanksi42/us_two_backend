@@ -18,7 +18,9 @@ from app.config import settings
 from app.connect.models import PartnerConnection
 from app.dependencies import get_current_user, get_db
 from app.memories.models import Memory, MemoryDay, MemoryEntry
-from app.memories.schemas import BulkEntriesIn, DayIn, EntryIn, MemoryIn
+from app.memories.schemas import (
+    BulkEntriesIn, DayIn, DayUpdate, EntryIn, EntryUpdate, MemoryIn, MemoryUpdate,
+)
 
 router = APIRouter(prefix="/api", tags=["Memories"])
 
@@ -31,6 +33,42 @@ def journey_label(
         return fallback
     start, end = date.fromisoformat(date_start), date.fromisoformat(date_end)
     return f"Our Journey: {start.day} {start.strftime('%b')} · Through: {end.day} {end.strftime('%b')}"
+
+
+def shared_user_ids(db: Session, user_id: str) -> list[str]:
+    """Return both account ids for an accepted couple, otherwise just the user."""
+    connection = db.scalar(
+        select(PartnerConnection).where(
+            PartnerConnection.status == "accepted",
+            or_(
+                PartnerConnection.requester_id == user_id,
+                PartnerConnection.partner_id == user_id,
+            ),
+        )
+    )
+    if not connection:
+        return [user_id]
+    partner_id = connection.partner_id if connection.requester_id == user_id else connection.requester_id
+    return [user_id, partner_id] if partner_id else [user_id]
+
+
+def accessible_memory(db: Session, memory_id: str, user_id: str) -> Optional[Memory]:
+    """Find a memory either partner is allowed to change."""
+    return db.scalar(
+        select(Memory).where(
+            Memory.id == memory_id,
+            Memory.user_id.in_(shared_user_ids(db, user_id)),
+        )
+    )
+
+
+def accessible_day(db: Session, day_id: str, user_id: str) -> Optional[MemoryDay]:
+    """Find a day either partner is allowed to change."""
+    return db.scalar(
+        select(MemoryDay)
+        .join(Memory)
+        .where(MemoryDay.id == day_id, Memory.user_id.in_(shared_user_ids(db, user_id)))
+    )
 
 
 def dump_entry(entry: MemoryEntry) -> dict:
@@ -79,24 +117,7 @@ def list_memories(
 ):
     """List all memories for the current user and their connected partner."""
     # Find connected partner (if any)
-    accepted = db.scalar(
-        select(PartnerConnection).where(
-            PartnerConnection.status == "accepted",
-            or_(
-                PartnerConnection.requester_id == user.id,
-                PartnerConnection.partner_id == user.id,
-            ),
-        )
-    )
-    user_ids = [user.id]
-    if accepted:
-        other_id = (
-            accepted.partner_id
-            if accepted.requester_id == user.id
-            else accepted.requester_id
-        )
-        if other_id:
-            user_ids.append(other_id)
+    user_ids = shared_user_ids(db, user.id)
 
     memories = db.scalars(
         select(Memory)
@@ -122,6 +143,40 @@ def create_memory(
     return dump_memory(memory)
 
 
+@router.put("/memories/{memory_id}")
+def update_memory(
+    memory_id: str,
+    payload: MemoryUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update a shared memory; either connected partner may do so."""
+    memory = accessible_memory(db, memory_id, user.id)
+    if not memory:
+        raise HTTPException(404, "Memory not found.")
+    data = payload.model_dump()
+    data["date_label"] = journey_label(data["date_start"], data["date_end"], data["date_label"])
+    for key, value in data.items():
+        setattr(memory, key, value)
+    db.commit()
+    db.refresh(memory)
+    return dump_memory(memory)
+
+
+@router.delete("/memories/{memory_id}", status_code=204)
+def delete_memory(
+    memory_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a memory and its days/moments for both connected partners."""
+    memory = accessible_memory(db, memory_id, user.id)
+    if not memory:
+        raise HTTPException(404, "Memory not found.")
+    db.delete(memory)
+    db.commit()
+
+
 @router.post("/memories/{memory_id}/days", status_code=201)
 def create_day(
     memory_id: str,
@@ -130,9 +185,7 @@ def create_day(
     db: Session = Depends(get_db),
 ):
     """Add a day to a memory."""
-    memory = db.scalar(
-        select(Memory).where(Memory.id == memory_id, Memory.user_id == user.id)
-    )
+    memory = accessible_memory(db, memory_id, user.id)
     if not memory:
         raise HTTPException(404, "Memory not found.")
     day = MemoryDay(memory_id=memory.id, **payload.model_dump())
@@ -140,6 +193,35 @@ def create_day(
     db.commit()
     db.refresh(day)
     return {"id": day.id, "date": day.day_date, "label": day.title, "entries": []}
+
+
+@router.put("/days/{day_id}")
+def update_day(
+    day_id: str,
+    payload: DayUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    day = accessible_day(db, day_id, user.id)
+    if not day:
+        raise HTTPException(404, "Day not found.")
+    day.day_date, day.title = payload.day_date, payload.title
+    db.commit()
+    db.refresh(day)
+    return {"id": day.id, "date": day.day_date, "label": day.title, "entries": [dump_entry(e) for e in day.entries]}
+
+
+@router.delete("/days/{day_id}", status_code=204)
+def delete_day(
+    day_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    day = accessible_day(db, day_id, user.id)
+    if not day:
+        raise HTTPException(404, "Day not found.")
+    db.delete(day)
+    db.commit()
 
 
 @router.post("/days/{day_id}/entries", status_code=201)
@@ -150,11 +232,7 @@ def create_entry(
     db: Session = Depends(get_db),
 ):
     """Add an entry to a day."""
-    day = db.scalar(
-        select(MemoryDay)
-        .join(Memory)
-        .where(MemoryDay.id == day_id, Memory.user_id == user.id)
-    )
+    day = accessible_day(db, day_id, user.id)
     if not day:
         raise HTTPException(404, "Day not found.")
     entry = MemoryEntry(day_id=day.id, **payload.model_dump())
@@ -162,6 +240,46 @@ def create_entry(
     db.commit()
     db.refresh(entry)
     return dump_entry(entry)
+
+
+@router.put("/entries/{entry_id}")
+def update_entry(
+    entry_id: str,
+    payload: EntryUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    entry = db.scalar(
+        select(MemoryEntry)
+        .join(MemoryDay)
+        .join(Memory)
+        .where(MemoryEntry.id == entry_id, Memory.user_id.in_(shared_user_ids(db, user.id)))
+    )
+    if not entry:
+        raise HTTPException(404, "Moment not found.")
+    for key, value in payload.model_dump().items():
+        setattr(entry, key, value)
+    db.commit()
+    db.refresh(entry)
+    return dump_entry(entry)
+
+
+@router.delete("/entries/{entry_id}", status_code=204)
+def delete_entry(
+    entry_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    entry = db.scalar(
+        select(MemoryEntry)
+        .join(MemoryDay)
+        .join(Memory)
+        .where(MemoryEntry.id == entry_id, Memory.user_id.in_(shared_user_ids(db, user.id)))
+    )
+    if not entry:
+        raise HTTPException(404, "Moment not found.")
+    db.delete(entry)
+    db.commit()
 
 
 @router.post("/days/{day_id}/entries/bulk", status_code=201)
@@ -172,11 +290,7 @@ def create_entries_bulk(
     db: Session = Depends(get_db),
 ):
     """Add multiple entries to a day in a single batch transaction."""
-    day = db.scalar(
-        select(MemoryDay)
-        .join(Memory)
-        .where(MemoryDay.id == day_id, Memory.user_id == user.id)
-    )
+    day = accessible_day(db, day_id, user.id)
     if not day:
         raise HTTPException(404, "Day not found.")
 
