@@ -5,6 +5,7 @@ Handles HTTP-specific concerns: cookies, headers, response formatting.
 Adapted from Project1's production-grade auth router for us-two.
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -24,6 +25,7 @@ from app.config import settings
 from app.exceptions import InvalidCredentialsError
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+logger = logging.getLogger("us-two.auth")
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -156,7 +158,10 @@ def google_login(
             raise ValueError("Invalid Google token issuer")
         if not claims.get("email_verified") or not claims.get("email") or not claims.get("sub"):
             raise ValueError("Google account email is not verified")
-    except Exception:
+    except Exception as exc:
+        # Keep the client response generic, but log the validation reason for
+        # deployment diagnostics (no credential/token content is ever logged).
+        logger.warning("Google ID token verification failed: %s", exc)
         raise InvalidCredentialsError()
 
     result = AuthService.login_with_google(
