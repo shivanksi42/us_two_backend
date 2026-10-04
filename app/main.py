@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import inspect, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
@@ -220,12 +221,20 @@ app.include_router(memories_router)
 
 @app.on_event("startup")
 def startup():
-    """Create all database tables on startup."""
+    """Create tables and apply the small backwards-compatible schema upgrade."""
     # Import all models to ensure they're registered with Base.metadata
     import app.auth.models  # noqa: F401
     import app.connect.models  # noqa: F401
     import app.memories.models  # noqa: F401
     Base.metadata.create_all(engine)
+    inspector = inspect(engine)
+    if inspector.has_table("memories"):
+        columns = {column["name"] for column in inspector.get_columns("memories")}
+        with engine.begin() as connection:
+            for name in ("date_start", "date_end"):
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE memories ADD COLUMN {name} VARCHAR(10)"))
+                    logger.info("Added memories.%s", name)
     logger.info("Database tables created/verified")
 
 

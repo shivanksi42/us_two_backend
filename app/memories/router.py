@@ -4,7 +4,8 @@ Handles CRUD operations for memories, days, and entries.
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Optional
 
 import cloudinary
 import cloudinary.utils
@@ -20,6 +21,16 @@ from app.memories.models import Memory, MemoryDay, MemoryEntry
 from app.memories.schemas import BulkEntriesIn, DayIn, EntryIn, MemoryIn
 
 router = APIRouter(prefix="/api", tags=["Memories"])
+
+
+def journey_label(
+    date_start: Optional[str], date_end: Optional[str], fallback: Optional[str]
+) -> Optional[str]:
+    """Return the consistent human-readable label used across the journal."""
+    if not date_start or not date_end:
+        return fallback
+    start, end = date.fromisoformat(date_start), date.fromisoformat(date_end)
+    return f"Our Journey: {start.day} {start.strftime('%b')} · Through: {end.day} {end.strftime('%b')}"
 
 
 def dump_entry(entry: MemoryEntry) -> dict:
@@ -41,7 +52,9 @@ def dump_memory(memory: Memory) -> dict:
         "id": memory.id,
         "title": memory.title,
         "place": memory.place,
-        "dates": memory.date_label,
+        "dates": journey_label(memory.date_start, memory.date_end, memory.date_label),
+        "startDate": memory.date_start,
+        "endDate": memory.date_end,
         "color": memory.color,
         "cover": memory.cover,
         "days": [
@@ -100,7 +113,9 @@ def create_memory(
     db: Session = Depends(get_db),
 ):
     """Create a new memory."""
-    memory = Memory(user_id=user.id, **payload.model_dump())
+    data = payload.model_dump()
+    data["date_label"] = journey_label(data["date_start"], data["date_end"], data["date_label"])
+    memory = Memory(user_id=user.id, **data)
     db.add(memory)
     db.commit()
     db.refresh(memory)

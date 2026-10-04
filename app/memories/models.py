@@ -30,6 +30,8 @@ class Memory(Base):
     title: Mapped[str] = mapped_column(String(200))
     place: Mapped[Optional[str]] = mapped_column(String(200))
     date_label: Mapped[Optional[str]] = mapped_column(String(100))
+    date_start: Mapped[Optional[str]] = mapped_column(String(10))
+    date_end: Mapped[Optional[str]] = mapped_column(String(10))
     color: Mapped[str] = mapped_column(String(10), default="#C45B38")
     cover: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
