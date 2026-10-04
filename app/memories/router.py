@@ -90,28 +90,33 @@ def configure_cloudinary() -> tuple[str, str, str]:
     return cloud_name, api_key, api_secret
 
 
-def delete_cloudinary_images(entries: list[MemoryEntry]) -> None:
-    """Delete Cloudinary assets for photo entries before their DB rows disappear."""
-    public_ids = sorted({entry.photo_public_id for entry in entries if entry.photo_public_id})
-    if not public_ids:
+def delete_cloudinary_media(entries: list[MemoryEntry]) -> None:
+    """Delete Cloudinary image/video assets before their DB rows disappear."""
+    media_by_type: dict[str, set[str]] = {"image": set(), "video": set()}
+    for entry in entries:
+        if entry.photo_public_id and entry.type in {"photo", "video"}:
+            resource_type = "video" if entry.type == "video" else "image"
+            media_by_type[resource_type].add(entry.photo_public_id)
+    if not any(media_by_type.values()):
         return
     configure_cloudinary()
     try:
-        result = cloudinary.api.delete_resources(
-            public_ids,
-            resource_type="image",
-            invalidate=True,
-        )
-        deleted = result.get("deleted", {})
-        failed = [public_id for public_id in public_ids if deleted.get(public_id) not in {"deleted", "not_found"}]
-        if failed:
-            logger.error("Cloudinary did not delete asset(s): %s", failed)
-            raise HTTPException(502, "Could not delete the uploaded image. Please try again.")
+        for resource_type, public_ids in media_by_type.items():
+            if not public_ids:
+                continue
+            result = cloudinary.api.delete_resources(
+                sorted(public_ids), resource_type=resource_type, invalidate=True,
+            )
+            deleted = result.get("deleted", {})
+            failed = [public_id for public_id in public_ids if deleted.get(public_id) not in {"deleted", "not_found"}]
+            if failed:
+                logger.error("Cloudinary did not delete %s asset(s): %s", resource_type, failed)
+                raise HTTPException(502, "Could not delete the uploaded media. Please try again.")
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Cloudinary image deletion failed")
-        raise HTTPException(502, "Could not delete the uploaded image. Please try again.")
+        logger.exception("Cloudinary media deletion failed")
+        raise HTTPException(502, "Could not delete the uploaded media. Please try again.")
 
 
 def dump_entry(entry: MemoryEntry) -> dict:
@@ -124,6 +129,7 @@ def dump_entry(entry: MemoryEntry) -> dict:
         "caption": entry.caption,
         "text": entry.body,
         "color": entry.color,
+        "sortOrder": entry.sort_order,
     }
 
 
@@ -145,7 +151,7 @@ def dump_memory(memory: Memory) -> dict:
                 "label": day.title,
                 "entries": [
                     dump_entry(e)
-                    for e in sorted(day.entries, key=lambda x: x.created_at)
+                    for e in sorted(day.entries, key=lambda x: (x.sort_order is None, x.sort_order or 0, x.created_at))
                 ],
             }
             for day in sorted(memory.days, key=lambda x: x.day_date)
@@ -216,7 +222,7 @@ def delete_memory(
     memory = accessible_memory(db, memory_id, user.id)
     if not memory:
         raise HTTPException(404, "Memory not found.")
-    delete_cloudinary_images([
+    delete_cloudinary_media([
         entry for day in memory.days for entry in day.entries
     ])
     db.delete(memory)
@@ -266,7 +272,7 @@ def delete_day(
     day = accessible_day(db, day_id, user.id)
     if not day:
         raise HTTPException(404, "Day not found.")
-    delete_cloudinary_images(list(day.entries))
+    delete_cloudinary_media(list(day.entries))
     db.delete(day)
     db.commit()
 
@@ -282,7 +288,8 @@ def create_entry(
     day = accessible_day(db, day_id, user.id)
     if not day:
         raise HTTPException(404, "Day not found.")
-    entry = MemoryEntry(day_id=day.id, **payload.model_dump())
+    next_order = max((entry.sort_order or 0 for entry in day.entries), default=-1) + 1
+    entry = MemoryEntry(day_id=day.id, sort_order=next_order, **payload.model_dump())
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -325,7 +332,7 @@ def delete_entry(
     )
     if not entry:
         raise HTTPException(404, "Moment not found.")
-    delete_cloudinary_images([entry])
+    delete_cloudinary_media([entry])
     db.delete(entry)
     db.commit()
 
@@ -342,9 +349,15 @@ def create_entries_bulk(
     if not day:
         raise HTTPException(404, "Day not found.")
 
+    # Normalize the current sequence, then insert the new batch at the
+    # requested visual position. This remains deterministic for both partners.
+    existing = sorted(day.entries, key=lambda x: (x.sort_order is None, x.sort_order or 0, x.created_at))
+    insert_at = len(existing) if payload.insert_at is None else min(payload.insert_at, len(existing))
+    for index, entry in enumerate(existing):
+        entry.sort_order = index if index < insert_at else index + len(payload.entries)
     new_entries = [
-        MemoryEntry(day_id=day.id, **entry_data.model_dump())
-        for entry_data in payload.entries
+        MemoryEntry(day_id=day.id, sort_order=insert_at + index, **entry_data.model_dump())
+        for index, entry_data in enumerate(payload.entries)
     ]
     db.add_all(new_entries)
     db.commit()

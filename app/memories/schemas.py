@@ -37,7 +37,7 @@ class DayUpdate(BaseModel):
 
 
 class EntryUpdate(BaseModel):
-    type: Literal["photo", "text"]
+    type: Literal["photo", "video", "text"]
     photo_url: Optional[str] = None
     photo_public_id: Optional[str] = None
     caption: Optional[str] = None
@@ -53,7 +53,7 @@ class DayIn(BaseModel):
 
 class EntryIn(BaseModel):
     """Create a new entry within a day."""
-    type: Literal["photo", "text"]
+    type: Literal["photo", "video", "text"]
     photo_url: Optional[str] = None
     photo_public_id: Optional[str] = None
     caption: Optional[str] = None
@@ -64,3 +64,4 @@ class EntryIn(BaseModel):
 class BulkEntriesIn(BaseModel):
     """Create multiple entries within a day in a single batch."""
     entries: list[EntryIn] = Field(..., min_length=1, max_length=100)
+    insert_at: Optional[int] = Field(default=None, ge=0)

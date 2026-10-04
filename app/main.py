@@ -244,6 +244,12 @@ def startup():
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users (google_sub)"
             ))
+    if inspector.has_table("memory_entries"):
+        entry_columns = {column["name"] for column in inspector.get_columns("memory_entries")}
+        if "sort_order" not in entry_columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE memory_entries ADD COLUMN sort_order INTEGER"))
+                logger.info("Added memory_entries.sort_order")
     logger.info("Database tables created/verified")
 
 

@@ -39,8 +39,8 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # Set to True in production with HTTPS
-        samesite="lax",
+        secure=settings.is_production,
+        samesite="none" if settings.is_production else "lax",
         max_age=90 * 24 * 60 * 60,  # 90 days in seconds
         path="/api/auth",
     )
@@ -55,8 +55,8 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key="refresh_token",
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.is_production,
+        samesite="none" if settings.is_production else "lax",
         path="/api/auth",
     )
 
